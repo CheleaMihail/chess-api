@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from app import crud
 from app.database import get_db
 from app.services import auth
-from app.schemas.auth import UserLogin, RefershToken
+from app.schemas.auth import RefreshTokenRequest, UserLogin, RefershToken
 from app.schemas.user import UserAuthResponse
 
 router = APIRouter()
@@ -33,15 +33,8 @@ async def login(login_data: UserLogin, db: Session = Depends(get_db)):
 
 
 @router.post("/refresh/", response_model=RefershToken)
-async def refresh_token(
-    authorization: str = Header(...), db: Session = Depends(get_db)
-):
-    token_type, refresh_token = authorization.split(" ")
-
-    if token_type.lower() != "bearer":
-        raise HTTPException(status_code=400, detail="Invalid token type")
-
-    token_data = auth.verify_refresh_token(refresh_token)
+async def refresh_token(request: RefreshTokenRequest):
+    token_data = auth.verify_refresh_token(request.refresh_token)
 
     if token_data is None:
         raise HTTPException(status_code=401, detail="Invalid refresh token")
@@ -50,6 +43,4 @@ async def refresh_token(
         {"username": token_data.username, "id": token_data.id}
     )
 
-    return {
-        "access_token": new_access_token,
-    }
+    return {"access_token": new_access_token, "id": token_data.id}

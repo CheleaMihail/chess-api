@@ -21,6 +21,15 @@ def get_user_by_id(db: Session, user_id: int):
     return db.query(User).filter(User.id == user_id).first()
 
 
+def get_users_by_username(db: Session, username_substr: str, current_user_id: int):
+    return (
+        db.query(User)
+        .filter(User.username.ilike(f"%{username_substr}%"))
+        .filter(User.id != current_user_id)
+        .all()
+    )
+
+
 def update_user(db: Session, user_id: int, user: UserCreate, hashed_password: str):
     db_user = db.query(User).filter(User.id == user_id).first()
     if db_user:

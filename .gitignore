@@ -4,6 +4,7 @@ app.egg-info
 .mypy_cache
 .coverage
 htmlcov
+stockfish
 .cache
 venv
 .env

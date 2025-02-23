@@ -10,6 +10,12 @@ class User(Base):
     username = Column(String, unique=True, nullable=False)
     email = Column(String, unique=True, index=True, nullable=False)
     hashed_password = Column(String, nullable=False)
+
+    stats_ultra = Column(Integer, default=0)
+    stats_bullet = Column(Integer, default=0)
+    stats_rapid = Column(Integer, default=0)
+    stats_blitz = Column(Integer, default=0)
+    stats_classic = Column(Integer, default=0)
     # Relationship with the Profile model (one-to-one)
     # profile = relationship("Profile", back_populates="user", uselist=False)
 

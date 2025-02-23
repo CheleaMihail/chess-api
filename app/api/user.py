@@ -5,6 +5,8 @@ from app.database import get_db
 from app.services import auth
 from app.schemas.auth import TokenData
 from app.schemas.user import UserAuthResponse, UserResponse, UserCreate
+from typing import List
+import chess
 
 router = APIRouter()
 
@@ -42,7 +44,6 @@ def create_user(user: UserCreate, db: Session = Depends(get_db)):
 )
 def get_user(
     user_id: int,
-    request: Request,
     db: Session = Depends(get_db),
     current_user=Depends(auth.get_current_user),
 ):
@@ -54,11 +55,32 @@ def get_user(
     return user_data
 
 
+# Get current user
+@router.get("/current/", response_model=UserResponse)
+def get_user(
+    db: Session = Depends(get_db), current_user=Depends(auth.get_current_user)
+):
+    user_data = crud.get_user_by_id(db, user_id=current_user.id)
+
+    return user_data
+
+
+# Search useers by username
+@router.get("/search/{username}", response_model=List[UserResponse])
+def search(
+    username: str,
+    db: Session = Depends(get_db),
+    current_user=Depends(auth.get_current_user),
+):
+    users = crud.get_users_by_username(
+        db, username_substr=username, current_user_id=current_user.id
+    )
+
+    return users
+
+
 # Update user endpoint
-@router.put(
-    "/{user_id}",
-    response_model=UserResponse,
-)
+@router.put("/{user_id}", response_model=UserResponse)
 def update_user(
     user_id: int,
     user: UserCreate,

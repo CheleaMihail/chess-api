@@ -2,9 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import engine, Base
-from app.api import user, profile, room, auth
-from app.config import settings
-from app.middlewares import TokenAuthMiddleware
+from app.api import user, profile, room, auth, chess
 
 # Initialize the database
 Base.metadata.create_all(bind=engine)
@@ -22,10 +20,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# app.add_middleware(TokenAuthMiddleware)
 
 # Include Routers
 app.include_router(user.router, prefix="/users", tags=["Users"])
+app.include_router(chess.router, prefix="/chess", tags=["Chess"])
 app.include_router(auth.router, prefix="/auth", tags=["Authorization"])
 app.include_router(profile.router, prefix="/profiles", tags=["Profiles"])
 app.include_router(room.router, prefix="/rooms", tags=["Chess Rooms"])
