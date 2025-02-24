@@ -1,4 +1,4 @@
-import asyncio
+from datetime import datetime
 from itertools import islice
 import logging
 import random
@@ -49,7 +49,7 @@ class ChessRoomManager:
     ):
         await websocket.accept()
 
-        self.remove_created_rooms(user_id)
+        self.remove_created_room(user_id)
 
         board = chess.Board(fen)
 
@@ -65,11 +65,12 @@ class ChessRoomManager:
             "with_armaghedon": with_armaghedon,
             "active_board": {
                 "game_id": None,
-                "board": chess.Board(fen),
+                "board": board,
                 "fen": board.fen(),
                 "white": None,
                 "black": None,
-                "moves": {},
+                "moves": [],
+                "start_time": datetime.now().timestamp(),
             },
             "players": {user_id: {"time": player_time, "increment": player_increment}},
             "messages": [],
@@ -77,31 +78,13 @@ class ChessRoomManager:
 
         self.rooms[user_id] = room
 
+        game = self.get_game_preview(room, user_id, user_id)
+
         await websocket.send_json(
             {
                 "message": f"Created new room {user_id}",
                 "op": "created",
-                "game": {
-                    "roomId": user_id,
-                    "connectStatus": room["connect_status"],
-                    "battleId": room["battle_id"],
-                    "gameId": room["active_board"]["game_id"],
-                    "type": room["game_type"],
-                    "isRating": room["is_rating"],
-                    "gamesCount": room["games_count"],
-                    "playerTime": room["players"][user_id]["time"],
-                    "playerIncrement": room["players"][user_id]["increment"],
-                    "opponentTime": room["opponent_time"],
-                    "opponentIncrement": room["opponent_increment"],
-                    "withArmaghedon": room["with_armaghedon"],
-                    "messages": [],
-                    "opponentId": "",
-                    "activeBoard": {
-                        "fen": room["active_board"]["fen"],
-                        "playerColor": "white",
-                        "moves": [],
-                    },
-                },
+                "game": game,
             }
         )
 
@@ -135,40 +118,55 @@ class ChessRoomManager:
         if game_type:
             # Check if room exists and is in 'pending player' status
             room_id = self.find_pending_room(game_type)
-            logger.debug("room_id", room_id)
+
             if room_id in self.rooms:
                 await self.join_room(room_id, user_id, websocket, db)
             else:
-                self.remove_created_rooms(user_id)
+                self.remove_created_room(user_id)
 
                 board = chess.Board()
 
-                # room = {
-                #     "connect_status": "pending",
-                #     "battle_id": None,
-                #     "is_rating": False,
-                #     "game_type": game_type,
-                #     "games_count": 1,
-                #     "opponent_time": opponent_time,
-                #     "opponent_increment": opponent_increment,
-                #     "color_attach_mode": color_attach_mode,
-                #     "with_armaghedon": with_armaghedon,
-                #     "active_board": {
-                #         "game_id": None,
-                #         "board": chess.Board(fen),
-                #         "fen": board.fen(),
-                #         "white": None,
-                #         "black": None,
-                #         "moves": {},
-                #     },
-                #     "players": {
-                #         user_id: {"time": player_time, "increment": player_increment}
-                #     },
-                #     "messages": [],
-                # }
+                default_room_values = get_default_battle_rules(game_type)
 
-                # self.rooms[user_id] = room
-                await websocket.send_json({"message": f"No game found."})
+                room = {
+                    "connect_status": "pending",
+                    "battle_id": None,
+                    "is_rating": False,
+                    "game_type": game_type,
+                    "games_count": 1,
+                    "opponent_time": default_room_values["opponent_time"],
+                    "opponent_increment": default_room_values["opponent_increment"],
+                    "color_attach_mode": "random",
+                    "with_armaghedon": False,
+                    "active_board": {
+                        "game_id": None,
+                        "board": board,
+                        "fen": board.fen(),
+                        "white": None,
+                        "black": None,
+                        "moves": [],
+                        "start_time": datetime.now().timestamp(),
+                    },
+                    "players": {
+                        user_id: {
+                            "time": default_room_values["player_time"],
+                            "increment": default_room_values["player_increment"],
+                        }
+                    },
+                    "messages": [],
+                }
+
+                self.rooms[user_id] = room
+
+                game = self.get_game_preview(room, user_id, user_id)
+
+                await websocket.send_json(
+                    {
+                        "message": f"Created new room {user_id}",
+                        "op": "created",
+                        "game": game,
+                    }
+                )
 
     async def make_move(
         self,
@@ -177,6 +175,7 @@ class ChessRoomManager:
         room_id: Optional[str],
         user_id: Optional[str] = None,
     ):
+
         if not room_id or room_id not in self.rooms:
             await websocket.send_json({"message": "Game not found."})
             return
@@ -215,7 +214,42 @@ class ChessRoomManager:
                 board.push(chess_move)  # Make the move
 
                 # Broadcast the move to other players in the room
-                await self.broadcast(room, board.fen())
+                room["active_board"]["moves"].append(
+                    {
+                        "move": move,
+                        "color": turn_color,
+                        "time": datetime.now().timestamp(),
+                    }
+                )
+
+                room["active_board"]["fen"] = board.fen()
+
+                game_over_reason = None
+
+                if board.is_checkmate():
+                    game_over_reason = "Checkmate! Game Over."
+                elif board.is_stalemate():
+                    game_over_reason = "Stalemate! The game is a draw."
+                elif board.is_insufficient_material():
+                    game_over_reason = "Draw! Insufficient material."
+                elif board.can_claim_fifty_moves():
+                    game_over_reason = "Draw! 50-move rule."
+                elif board.can_claim_threefold_repetition():
+                    game_over_reason = "Draw! Threefold repetition."
+
+                if game_over_reason:
+                    room["connect_status"] = "finished"
+                    await self.broadcast_move(
+                        room,
+                        board.fen(),
+                        room["active_board"]["moves"],
+                        game_over_reason,
+                    )
+                else:
+                    # Transmite mutarea către ceilalți jucători
+                    await self.broadcast_move(
+                        room, board.fen(), room["active_board"]["moves"], ""
+                    )
             else:
                 await websocket.send_json(
                     {
@@ -234,7 +268,7 @@ class ChessRoomManager:
                 }
             )
 
-    async def broadcast(self, room, fen: str):
+    async def broadcast_move(self, room, fen: str, moves, game_over_reason):
         for user_id in room["players"]:
             websocket = self.get_websocket_by_user_id(user_id)
             if websocket:
@@ -243,6 +277,20 @@ class ChessRoomManager:
                         "message": f"Moved {fen}",
                         "op": "move",
                         "fen": fen,
+                        "moves": moves,
+                        "gameOverReason": game_over_reason,
+                    }
+                )
+
+    async def broadcast_remove(self, room_id):
+        for user_id in self.rooms[room_id]["players"]:
+            websocket = self.get_websocket_by_user_id(user_id)
+            if websocket:
+                await websocket.send_json(
+                    {
+                        "message": f"Game Canceled",
+                        "op": "removed",
+                        "connectedStatus": "removed",
                     }
                 )
 
@@ -292,38 +340,38 @@ class ChessRoomManager:
 
             room["connect_status"] = "connected"
 
-            battle_data = {
-                "type": room["game_type"],
-                "games_count": room["games_count"],
-                "player_time": room["players"][user_id]["time"],
-                "player_increment": room["players"][user_id]["increment"],
-                "opponent_time": room["players"][user_id]["time"],
-                "opponent_increment": room["players"][user_id]["increment"],
-                "color_attach_mode": room["color_attach_mode"],
-                "with_armaghedon": room["with_armaghedon"],
-            }
+            if "." not in user_id and "." not in room_id:
+                battle_data = {
+                    "type": room["game_type"],
+                    "games_count": room["games_count"],
+                    "player_time": room["players"][user_id]["time"],
+                    "player_increment": room["players"][user_id]["increment"],
+                    "opponent_time": room["players"][user_id]["time"],
+                    "opponent_increment": room["players"][user_id]["increment"],
+                    "color_attach_mode": room["color_attach_mode"],
+                    "with_armaghedon": room["with_armaghedon"],
+                }
 
-            battle = create_battle(db, Battle(**battle_data))
-            color = "white" if room["active_board"]["white"] == user_id else "black"
+                battle = create_battle(db, Battle(**battle_data))
+                color = "white" if room["active_board"]["white"] == user_id else "black"
 
-            game_data = {
-                "type": battle.type,
-                "is_rating": battle.is_rating,
-                "battle_id": battle.id,
-                "player_id": user_id,
-                "opponent_id": opponent_id,
-                "player_color": color == "white",
-                "moves": [],
-            }
+                game_data = {
+                    "type": battle.type,
+                    "is_rating": battle.is_rating,
+                    "battle_id": battle.id,
+                    "player_id": user_id,
+                    "opponent_id": opponent_id,
+                    "player_color": color == "white",
+                    "moves": [],
+                }
 
-            create_game(db, Game(**game_data))
-
-            battle = create_battle(db, Battle(**battle_data))
+                create_game(db, Game(**game_data))
 
             await self.initiate_players(room, room_id)
 
     async def initiate_players(self, room, room_id):
         for user_id in room["players"]:
+            logger.debug("initiate_players ${user_id}")
             websocket = self.get_websocket_by_user_id(user_id)
             opponent_id = self.get_opponent_id(room, user_id)
             if websocket:
@@ -341,6 +389,31 @@ class ChessRoomManager:
             if player != user_id:
                 return player
         return None
+
+    def get_game_preview(self, room, room_id, user_id):
+        color = "white" if room["active_board"]["white"] == user_id else "black"
+
+        return {
+            "roomId": user_id,
+            "connectStatus": room["connect_status"],
+            "battleId": room["battle_id"],
+            "gameId": room["active_board"]["game_id"],
+            "type": room["game_type"],
+            "isRating": room["is_rating"],
+            "gamesCount": room["games_count"],
+            "playerTime": room["players"][user_id]["time"],
+            "playerIncrement": room["players"][user_id]["increment"],
+            "opponentId": "",
+            "opponentTime": room["opponent_time"],
+            "opponentIncrement": room["opponent_increment"],
+            "withArmaghedon": room["with_armaghedon"],
+            "messages": room["messages"],
+            "activeBoard": {
+                "fen": room["active_board"]["fen"],
+                "playerColor": color,
+                "moves": room["active_board"]["moves"],
+            },
+        }
 
     def get_game(self, room, room_id, user_id, opponent_id):
         color = "white" if room["active_board"]["white"] == user_id else "black"
@@ -373,18 +446,30 @@ class ChessRoomManager:
                 return room_id  # Returnează primul room_id găsit
         return None
 
-    def remove_created_rooms(self, user_id):
+    def remove_created_room(self, user_id):
         if user_id in self.rooms:
             del self.rooms[user_id]
+        return
+
+    def remove_unconnected_room(self, user_id):
+        if user_id in self.rooms:
+            if self.rooms[user_id]["connect_status"] == "pending":
+                del self.rooms[user_id]
+        return
+
+    def remove_room(
+        self,
+        room_id: Optional[str],
+    ):
+        self.broadcast_remove(room_id)
 
     async def connect(self, websocket: WebSocket, user_id: str):
         self.user_connections[user_id] = websocket
 
-    async def disconnect(self, websocket: WebSocket, user_id: str):
+    async def disconnect(self, user_id: str):
         if user_id in self.user_connections:
+            self.remove_unconnected_room(user_id)
             del self.user_connections[user_id]
-
-        await websocket.send_json({"message": "Disconnected successfully"})
 
 
 manager = ChessRoomManager()
@@ -423,6 +508,9 @@ async def websocket_endpoint(
                 user_id,
                 room_id,
             )
+    if op == "remove":
+        if room_id:
+            await manager.remove_room(room_id)
     elif op == "search":
         if game_type:
             await manager.connect_by_game_type(
@@ -472,7 +560,7 @@ async def websocket_endpoint(
             # manager.last_interaction[user_id] = time.time()
             await manager.make_move(data["move"], websocket, data["room_id"], user_id)
     except WebSocketDisconnect:
-        await manager.disconnect(websocket, user_id)
+        await manager.disconnect(user_id)
 
     # async def message_reponse(ws, message, room_id, fen, color):
     #     await ws.send_json(

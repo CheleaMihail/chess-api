@@ -6,34 +6,34 @@ import random
 def get_default_battle_rules(game_type):
     default_rules = {
         BattleType.ultra: {
-            "player_time": 15,
-            "player_increment": 0,
-            "opponent_time": 15,
-            "opponent_increment": 0,
+            "player_time": 0.25,
+            "player_increment": 5,
+            "opponent_time": 0.25,
+            "opponent_increment": 5,
         },
         BattleType.bullet: {
-            "player_time": 60,
-            "player_increment": 0,
-            "opponent_time": 60,
-            "opponent_increment": 0,
+            "player_time": 1,
+            "player_increment": 5,
+            "opponent_time": 1,
+            "opponent_increment": 5,
         },
         BattleType.rapid: {
-            "player_time": 600,
+            "player_time": 10,
             "player_increment": 10,
-            "opponent_time": 600,
+            "opponent_time": 10,
             "opponent_increment": 10,
         },
         BattleType.blitz: {
-            "player_time": 300,
-            "player_increment": 3,
-            "opponent_time": 300,
-            "opponent_increment": 3,
+            "player_time": 3,
+            "player_increment": 2,
+            "opponent_time": 3,
+            "opponent_increment": 2,
         },
         BattleType.classic: {
-            "player_time": 1800,
-            "player_increment": 30,
-            "opponent_time": 1800,
-            "opponent_increment": 30,
+            "player_time": 30,
+            "player_increment": 15,
+            "opponent_time": 30,
+            "opponent_increment": 15,
         },
     }
 
